@@ -62,6 +62,111 @@ public class ExecServiceTest {
             () -> s.submit(new TestRunnable()));
     }
 
+    @Test
+    void testShutdownNow() {
+        MyExecService s = MyExecService.newInstance();
+        int processors = Runtime.getRuntime().availableProcessors();
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+
+        for (int i = 0; i < processors; i++) {
+            s.submit(() -> {
+                try {
+                    latch.await();
+                } catch (InterruptedException e) {
+                }
+                return null;
+            });
+        }
+
+        s.submit(() -> "Queued");
+
+        java.util.List<Runnable> notExecuted = s.shutdownNow();
+
+        latch.countDown();
+
+        assertFalse(notExecuted.isEmpty(), "Should return tasks that were in queue");
+        assertTrue(s.isShutdown());
+    }
+
+    @Test
+    void testInvokeAll() throws Exception {
+        MyExecService s = MyExecService.newInstance();
+
+        java.util.List<Callable<String>> tasks = java.util.Arrays.asList(
+            () -> "A",
+            () -> "B",
+            () -> "C"
+        );
+
+        java.util.List<Future<String>> futures = s.invokeAll(tasks);
+
+        assertEquals(3, futures.size());
+        assertEquals("A", futures.get(0).get());
+        assertEquals("B", futures.get(1).get());
+        assertEquals("C", futures.get(2).get());
+    }
+
+    @Test
+    void testInvokeAllWithTimeout() throws Exception {
+        MyExecService s = MyExecService.newInstance();
+
+        java.util.List<Callable<String>> tasks = java.util.Arrays.asList(
+            () -> { doSleep(10); return "Fast"; },
+            () -> { doSleep(500); return "Slow"; }
+        );
+
+        java.util.List<Future<String>> futures = s.invokeAll(
+            tasks, 100, java.util.concurrent.TimeUnit.MILLISECONDS
+        );
+
+        assertEquals(2, futures.size());
+
+        assertFalse(futures.get(0).isCancelled());
+        assertEquals("Fast", futures.get(0).get());
+
+        assertTrue(futures.get(1).isCancelled(), "Slow task should be cancelled");
+    }
+
+    @Test
+    void testInvokeAny() throws Exception {
+        MyExecService s = MyExecService.newInstance();
+
+        java.util.List<Callable<String>> tasks = java.util.Arrays.asList(
+            () -> { doSleep(500); return "Slow"; },
+            () -> { doSleep(10); return "Fast"; }
+        );
+
+        String result = s.invokeAny(tasks);
+        assertEquals("Fast", result);
+    }
+
+    @Test
+    void testInvokeAnyWithTimeout() throws Exception {
+        MyExecService s = MyExecService.newInstance();
+
+        java.util.List<Callable<String>> tasks = java.util.Collections.singletonList(
+            () -> { doSleep(500); return "Too Slow"; }
+        );
+
+        assertThrows(java.util.concurrent.TimeoutException.class, () -> {
+            s.invokeAny(tasks, 50, java.util.concurrent.TimeUnit.MILLISECONDS);
+        });
+    }
+
+    @Test
+    void testTaskException() {
+        MyExecService s = MyExecService.newInstance();
+
+        Future<Object> f = s.submit(() -> {
+            throw new RuntimeException();
+        });
+
+        assertThrows(java.util.concurrent.ExecutionException.class, () -> {
+            f.get();
+        });
+    }
+
+
     static void doSleep(int milis) {
         try {
             Thread.sleep(milis);
